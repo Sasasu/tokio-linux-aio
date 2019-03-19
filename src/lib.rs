@@ -207,7 +207,7 @@ impl AioBaseFuture {
 
     // Attempt to retrieve the result of a previously submitted I/O request; this may need to
     // wait until the I/O operation has been completed
-    fn retrieve_result(&mut self) -> Result<futures::Async<()>, io::Error> {
+    fn retrieve_result(&mut self) -> Result<futures::Async<u64>, io::Error> {
         // Check if we have received a notification indicating completion of the I/O request
         let result_code = match self.state.as_mut().unwrap().completed_receiver.poll() {
             Err(err) => return Err(io::Error::new(io::ErrorKind::Other, err)),
@@ -229,17 +229,17 @@ impl AioBaseFuture {
         if result_code < 0 {
             Err(io::Error::from_raw_os_error(result_code as i32))
         } else {
-            Ok(futures::Async::Ready(()))
+            Ok(futures::Async::Ready(result_code as u64))
         }
     }
 }
 
 // Common future base type for all asynchronous operations supperted by this API
 impl futures::Future for AioBaseFuture {
-    type Item = ();
+    type Item = u64;
     type Error = io::Error;
 
-    fn poll(&mut self) -> Result<futures::Async<()>, io::Error> {
+    fn poll(&mut self) -> Result<futures::Async<u64>, io::Error> {
         let result = self.submit_request();
 
         match result {
@@ -298,13 +298,13 @@ impl<ReadWriteHandle> futures::Future for AioReadResultFuture<ReadWriteHandle>
 where
     ReadWriteHandle: convert::AsMut<[u8]>,
 {
-    type Item = ReadWriteHandle;
+    type Item = (ReadWriteHandle, u64);
     type Error = AioError<ReadWriteHandle>;
 
     fn poll(&mut self) -> Result<futures::Async<Self::Item>, Self::Error> {
         self.base
             .poll()
-            .map(|val| val.map(|_| self.buffer.take().unwrap()))
+            .map(|val| val.map(|nbytes| (self.buffer.take().unwrap(), nbytes)))
             .map_err(|err| AioError {
                 buffer: self.buffer.take().unwrap(),
                 error: err,
@@ -329,13 +329,13 @@ impl<ReadOnlyHandle> futures::Future for AioWriteResultFuture<ReadOnlyHandle>
 where
     ReadOnlyHandle: convert::AsRef<[u8]>,
 {
-    type Item = ReadOnlyHandle;
+    type Item = (ReadOnlyHandle, u64);
     type Error = AioError<ReadOnlyHandle>;
 
     fn poll(&mut self) -> Result<futures::Async<Self::Item>, Self::Error> {
         self.base
             .poll()
-            .map(|val| val.map(|_| self.buffer.take().unwrap()))
+            .map(|val| val.map(|nbytes| (self.buffer.take().unwrap(), nbytes)))
             .map_err(|err| AioError {
                 buffer: self.buffer.take().unwrap(),
                 error: err,
@@ -353,7 +353,7 @@ pub struct AioSyncResultFuture
 
 impl futures::Future for AioSyncResultFuture
 {
-    type Item = ();
+    type Item = u64;
     type Error = io::Error;
 
     fn poll(&mut self) -> Result<futures::Async<Self::Item>, Self::Error> {
